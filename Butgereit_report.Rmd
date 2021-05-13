@@ -266,6 +266,11 @@ command
 R -max-mem-size=7000M --vanilla < Butgereit_script.R  > output.txt
 ```
 
+The report was generated with the following command
+```{r, eval=FALSE, echo=TRUE}
+Rscript -e "rmarkdown::render('Butgereit_report.Rmd')"
+```
+
 \newpage
 # Downloading, unzipping, and validating data {#download}
 

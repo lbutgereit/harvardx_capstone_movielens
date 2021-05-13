@@ -261,15 +261,11 @@ if ( !file.exists(genre_names_rda) ) {
     	genre_names <- str_replace(genre_names$genre, "-", "_")
     	print(genre_names)
   	save(genre_names, file = genre_names_rda)
-	rm(edx)
-  	print("saved genre_names")
+	print("saved genre_names")
 } else {
 	load(genre_names_rda)
 	print("loaded genre names")
 }
-
-rm(edx)
-print(genre_names)
 
 
 #
