@@ -1,0 +1,1450 @@
+---
+title: "Harvardx Capstone MovieLens"
+author: "Laura Butgereit"
+date: "08/05/2021"
+output: 
+  bookdown::pdf_document2:
+    number_sections: true
+    toc: true
+    lof: yes
+    keep_tex: true
+    extra_dependencies: ["float"]
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      fig.pos="H", fig.height=6, fig.width=6, fig.align="center",
+                      out.extra="")
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(Metrics)) install.packages("Metrics", repos = "http://cran.us.r-project.org")
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(dplyr)
+if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+```
+
+```{r, echo=FALSE}
+#
+# this is the theme for the graphs and a few functions to
+# ensure that all the graphs look similar
+#
+# theme from https://emanuelaf.github.io/own-ggplot-theme.html
+#
+my_theme <- function() {
+  theme(
+    # add border 1)
+    panel.border = element_rect(colour = "steelblue", fill = NA, linetype = 1),
+    # color background 2)
+    panel.background = element_rect(fill = "aliceblue"),
+    # modify grid 3)
+    panel.grid.major.x = element_line(colour = "steelblue", linetype = 3, size = 0.5),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y =  element_line(colour = "steelblue", linetype = 3, size = 0.5),
+    panel.grid.minor.y = element_blank(),
+    # modify text, axis and colour 4) and 5)
+    axis.text = element_text(colour = "steelblue"),
+    axis.title = element_text(colour = "steelblue"),
+    axis.ticks = element_line(colour = "steelblue"),
+    # legend at the bottom 6)
+    legend.position = "top",
+    #plot.fill = "steelblue",
+    plot.title = element_text(colour = "steelblue", hjust = 0.5),
+  )
+}
+update_geom_defaults("bar", list(fill = "steelblue", alpha = 0.6, color = "steelblue"))   # color was blue
+update_geom_defaults("point", list(fill = "steelblue", alpha = 0.6, color = "steelblue"))  # color was blue
+update_geom_defaults("smooth", list(fill = "steelblue", alpha = 0.6, color = "violet"))
+update_geom_defaults("boxplot", list(fill = "steelblue", alpha = 0.6, outlier.color = "violet"))
+
+#
+# this function is to ensure that all histograms 
+# have a similar look and feel
+#
+#
+histogram_graph <- function(data, x, bins=10) {
+  p <- ggplot(aes(x), data=data) +
+    scale_y_continuous()+
+    geom_histogram(bins=bins)  +
+    scale_x_log10() +
+    #theme(plot.title = element_text(hjust = 0.5))+
+    ylab("Quantity") +
+    my_theme()
+  p
+}
+
+#
+# this function is to ensure that all graphs which
+# have rating on the y axis have the same scale etc
+#
+# this will be used by all the graphs which have
+# average ratings on the y axis
+#
+rating_graph <- function(data, x, y) {
+  p <- ggplot(aes(x, y), data=data) +
+    scale_y_continuous(limits=c(0.0, 5.5), breaks = 0:5)+
+    geom_point() + 
+    geom_smooth(method = "loess", formula="y ~ x") +
+    ylab("Average Rating") +
+    my_theme()
+  p
+}
+
+#
+#
+#
+bar_graph <- function(data, x, y) {
+  p <- ggplot(aes(x, y), data=data) +
+    geom_bar(stat = "identity") +
+    my_theme()
+  p
+}
+
+#
+# boxplot function to ensure all boxplots looks
+# similar
+#
+boxplot_graph <- function(data, x) {
+ p <- ggplot(aes(x, y), data=data) +
+    geom_boxplot() +
+    my_theme()
+ p
+}
+
+```
+
+\listoffigures
+
+\listoftables
+\newpage
+
+# Introduction
+
+Consumer behavior, especially consumer decision making, has been of interest
+to researchers for ages.  Some of the earliest documented research into consumer
+behavior was in 1713, when Swiss professor Nicolas Bernoulli investigated how
+much money a person would be willing to spend to play a simple game of
+chance involving tossing a coin (Plous, 1993). But even earlier than that,
+in the 15th century, Europeans began importing spices from the Far East
+(Solomon et al, 2012).  How did those traders decide which spices to import?
+How did they know that consumers would like one spice and not like another
+spice?
+
+In more recent times with the advent of large datasets, it has become possible
+to predict consumer behavior by looking at past behavior which is documented
+in these datasets.  Gartner defines *predictive behavior analysis* as the use
+of techniques such as data mining, data visualization, algorithm clustering
+and neural networks in order to find patterns or trends in data.  These
+patterns or trends could be used to identify products which customers are
+likely to buy next (Gartner, 2021).
+
+The research described in this paper uses a dataset of movie information
+and viewer ratings of that movie.  The
+ratings range from zero to five and embody the consumers' review of the movie.
+Was the movie good?  Then the consumer may give it a five.  Was the movie
+terrible?  Then the consumer may give it a one.  The assignment is to
+predict the rating given various criteria.  Success or failure is
+measured by root mean squared error (and not by accuracy measurements).
+
+This research uses a historical dataset of movie ratings and attempts to
+predict the way consumers may review movies in future.
+
+This project was part of a Capstone project in Harvardx's *Professional Certificate in Data Science*.
+
+Section \@ref(environment) describes the computational environment where this
+research was executed.  This section also itemizes any modifications that might
+have needed to be done in order to process the large data files.
+
+Section \@ref(download) describes issues which were encountered in downloading the
+required data files.  This section provides various strategies which were
+utilized to handle these issues.  Section \@ref(edxAndValidation) provides
+information on how the training data and validation data was extracted.
+
+Section \@ref(initial) of this paper describes the initial exploration into the *edx* dataset.
+This section includes numerical values and some histograms of distributions.
+After the initial exploration, the training dataset was reshaped to expose
+more information.  This reshaping is described in Section \@ref(reshaping).
+
+The bulk of the investigation into the dataset is described in Section
+\@ref(exploration).  This section includes investigations into the relationships
+between various pieces of data (such as the age of a movie) and the ratings
+that they collected.
+
+Section \@ref(model) describes the various investigations into possible
+models to be able to predict the ratings given to a movie.  There were a
+number of different strategies which were investigated.  Each model is
+described along with the RMSE (root mean square error) for that model.
+A summary of the various RMSEs for each model is provided in Sub-Section \@ref(modelsummary).  The results of the model on the validation set is described in Sub-Section \@ref(validation).
+
+Conclusions can be found in Section \@ref(conclusions).
+
+Before continuing with this document, the author wishes to share the wise words of Donald Knuth (1984).  In his journal
+paper entitled *Literate Programming* he states:
+
+\begin{quotation}
+Let us change our traditional attitude to the construction of [computer] programs:  Instead of imagining that our 
+main task is to instruct a 
+\begin{em}
+computer
+\end{em}
+what to do,  let us concentrate rather on explaining to 
+\begin{em}
+human beings
+\end{em}
+what we want a computer to do. 
+
+The practitioner of literate programming can be regarded as an essayist,  whose  main concern  is with 
+exposition and  excellence  of style.  
+Such an author, with thesaurus in hand, chooses the names of variables carefully and explains what each 
+variable means.  He or she strives
+for a program that is comprehensible because its concepts have been introduced in an order that is best for human
+understanding...
+\end{quotation}
+
+The author eschews variables such as *mu* and *y_hat* (which may be familiar to data science practitioners and
+statisticians), in favour of more descriptive variables such as *overall_average* and *predicted_rating*.  Although this practice may
+be in conflict with code examples in (Irizarry, 2021), the author is employed in the IT industry and is attending this
+course with the view of integrating R (running in an automated fashion started by Java programs) into a Spring Boot environment.  As such the practices of good
+naming conventions in source code are well ingrained.
+
+\newpage
+# Compute Environment and Memory issues {#environment}
+
+The analyses presented in the paper were done on a Dell XPS 13 9380 13.3" Core i7-8565U Notebook. The notebook has 8GB memory and a Core i7-8565U processor.  The notebook was running Ubuntu 20.04.2 LTS with R 4.0.3 installed.
+
+## Adding more swap space
+
+There were memory issues and an additional 4G swap space was configured on the notebook with the following Linux commands executed as superuser:
+
+```{r, eval=FALSE, echo=TRUE}
+fallocate -l 4G /harvardx_swapspace
+chmod 600 /harvardx_swapspace
+mkswap /harvardx_swapspace
+swapon /harvardx_swapspace
+```
+
+In order to have this swapspace available automatically when the notebook boots up
+an entry needed to be made in the file
+
+```{r, eval=FALSE, echo=TRUE}
+/etc/fstab
+```
+
+which looks like
+
+```{r, eval=FALSE, echo=TRUE}
+/harvardx_swapfile none swap sw 0 0
+```
+
+## Modifying *swappiness*
+
+The *swappiness* value defines how aggressively the Linux kernel swaps memory pages to swap devices.  The value ranges
+between zero and one hundred (Ljubuncic, 2015).  A higher *swappiness* value implies a stronger preference toward
+swapping more readily.  A lower value implies not swapping (Love, 2013).  The value can be configured on this file
+
+```{r, eval=FALSE, echo=TRUE}
+/etc/sysctl.conf
+```
+
+The entry looks like
+
+```{r, eval=FALSE, echo=TRUE}
+vm.swappiness=10
+```
+
+This change was made to stop Linux swapping excessively.
+
+## Request extra memory when executing R
+
+In order to successfully build and execute, the scripts were run in R and not Rstudio with the following
+command
+
+```{r, eval=FALSE, echo=TRUE}
+R -max-mem-size=7000M --vanilla < Butgereit_script.R  > output.txt
+```
+
+\newpage
+# Downloading, unzipping, and validating data {#download}
+
+The author lives in a rural area of Africa where download speeds are slow and connections often break.  For that reason, the code supplied by the Edx website for downloading data was modified slightly to include a *timeout* parameter.  *The code reviewer may need to increase the parameter depending on his or her local circumstances.*  The code then attempted to download 
+the required zip file, store the file locally, and then to check the size of the downloaded file to verify that the entire data file was downloaded.  If the download and size check did not succeed, error messages are printed and the script is stopped.  If the download and size check did succeed, only then is the data unzipped.
+
+## Set up pseudo-constants
+
+First a handful of pseudo-constants were set up
+
+```{r, echo=TRUE}
+url <- "http://files.grouplens.org/datasets/movielens/ml-10m.zip"
+zip_file_name <- "ml-10m.zip"
+zip_file_size <- 65566137
+download_timeout <- 600 #seconds == 10 minutes
+ratings_dat_name <- "ml-10M100K/ratings.dat"
+ratings_dat_size <- 265105635
+movies_dat_name <- "ml-10M100K/movies.dat"
+movies_dat_size <- 522197
+```
+
+## Download zip file and check sizes
+
+The script was broken up into sections where the sizes of all the downloaded files were tested before the next step was executed
+
+```{r, echo=TRUE}
+#
+# test to see if the file exists, if it does not exist, download it
+# OR if the file is not the correct size, download it
+#
+# NB:  short circuited logical operator
+#
+if ((!file.exists(zip_file_name) || 
+    (file.info(zip_file_name)$size) != zip_file_size)  ) {
+    options(timeout = download_timeout)
+    download.file(url, zip_file_name)
+}
+
+#
+# check to see if the entire fire was downloaded.  If not, give
+# manual instructions to the operator on what to do
+#
+if ( !file.exists(zip_file_name) || 
+     (file.info(zip_file_name)$size != zip_file_size) ) {
+  print("The file was not properly downloaded.  I suggest you")
+  print("download it through your browser.  Point your browser to ")
+  print(url)
+  print("and download it to the same directory where you started rstudio")
+  stop()
+}
+
+print("zip file download ok")
+```
+
+## Unzip file and check sizes
+
+
+```{r echo=TRUE}
+#
+# if the ratings file does not exist OR is not the right size OR
+# if the movies file does not exist OR is not the right size
+# then unzip the file (it obviously exists at this point or the
+# script would have stopped
+#
+if ( !file.exists(ratings_dat_name) || 
+     (file.info(ratings_dat_name)$size != ratings_dat_size) ||
+     !file.exists(movies_dat_name) ||
+     (file.info(movies_dat_name)$size != movies_dat_size) ) {
+  unzip(zip_file_name)
+}
+
+#
+# check to see if they have unzipped ok and are the correct size
+#
+if ( !file.exists(ratings_dat_name) || 
+     (file.info(ratings_dat_name)$size != ratings_dat_size) ||
+     !file.exists(movies_dat_name) ||
+     (file.info(movies_dat_name)$size != movies_dat_size) ) {
+  print("The files did not unzip properly.")
+  print("Do you have space on your workstation?")
+  print("Or are there permissions issues?")
+  stop()
+}
+
+print("data files unzipped ok")
+
+```
+
+\newpage
+# Extracting and saving the *edx* and *validation* datasets {#edxAndValidation}
+
+A script was provided to generate two datasets from the downloaded files:  *edx* and *validation*.  In order to keep all R code on one file, additional pseudo-constants were set up to facilitate storing these two datasets on intermediate R objects
+
+## Additional pseudo-constants
+
+```{r, echo=TRUE}
+#
+# set up common pseudo-constants
+#
+edx_rda <- "edx.rda"
+validation_rda <- "validation.rda"
+```
+
+## Build *edx* and *validation* datasets
+
+The following code rebuilds the objects when necessary
+
+NB:  The code does not check the modification dates on the downloaded files.  If the *edx* and *validation* intermediary
+R objects need to be rebuilt, then they must be removed from the file system manually and the script must be re-executed.
+
+```{r, echo=TRUE}
+#
+# the true part of the if statement is the original code 
+# from edx website
+#
+if ( !file.exists(edx_rda) || !file.exists(validation_rda) ) {
+  print("building the edx and validation data frames")
+  #
+  # read ratings - this is 
+  ratings <- fread(text = gsub("::", "\t", readLines(ratings_dat_name)),
+                   col.names = c("userId", "movieId", "rating", "timestamp"))
+  
+  
+  movies <- str_split_fixed(readLines(movies_dat_name), "\\::", 3)
+  colnames(movies) <- c("movieId", "title", "genres")
+  
+  
+  # if using R 4.0 or later:
+  movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
+                                             title = as.character(title),
+                                             genres = as.character(genres))
+  
+  
+  movielens <- left_join(ratings, movies, by = "movieId")
+  
+  # Validation set will be 10% of MovieLens data
+  set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+  test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+  edx <- movielens[-test_index,]
+  temp <- movielens[test_index,]
+  
+  # Make sure userId and movieId in validation set are also in edx set
+  validation <- temp %>% 
+    semi_join(edx, by = "movieId") %>%
+    semi_join(edx, by = "userId")
+  
+  # Add rows removed from validation set back into edx set
+  removed <- anti_join(temp, validation)
+  edx <- rbind(edx, removed)
+  
+  rm(ratings, movies, test_index, temp, movielens, removed)
+  
+  print(paste("edx nrow ", nrow(edx), sep=" "))
+  print(paste("validation nrow ", nrow(validation), sep=" "))
+  save(edx, file = edx_rda)
+  save(validation,file = validation_rda)
+  print("saved edx.rda and validation.rda")
+}
+```
+
+NB:  It is important to note that besides saving the *validation* dataset to the intermediate R data file, no other interaction was done with the *validation* dataset until the time the final model was to be tested as documented in Sub-Section \@ref(validation)
+
+\newpage
+# Initial Analysis of *edx* Dataset {#initial}
+
+Initial investigation in the *edx* dataset provides the following information.
+
+
+## Rows and columns in *edx* dataset
+
+Number of rows in *edx* dataset
+
+```{r, echo=FALSE}
+edx_rda <- "edx.rda"
+validation_rda <- "validation.rda"
+load(edx_rda)
+```
+```{r}
+nrow(edx)
+```
+
+Number of columns in *edx* dataset
+
+```{r}
+ncol(edx)
+```
+
+## Structure of *edx* dataset
+
+The structure of the *edx* dataset is
+
+```{r}
+str(edx)
+```
+
+And a sample of the data looks like
+
+```{r}
+head(edx, 3)
+```
+
+## Total number of movies
+
+The total number of movies which were reviewed is
+
+```{r}
+nrow(edx %>% select(movieId) %>% unique)
+```
+
+However, as can be seen in Figure \@ref(fig:reviews-per-movie) the number of reviews which a movie collected from users (also known
+as reviewers) spanned a wide range of values.
+
+
+```{r, echo=FALSE}
+load(edx_rda)
+```
+```{r reviews-per-movie, fig.cap="Reviews per movie"}
+reviews_per_movie <- edx %>% group_by(movieId) %>%
+  summarize(number_of_reviews = n())
+histogram_graph(x = reviews_per_movie$number_of_reviews,
+                data= reviews_per_movie, bins=20) +
+  xlab("Reviews per Movie")
+```
+```{r, echo=FALSE}
+rm(reviews_per_movie)  #free up memory
+```
+
+## Total number of reviewers or users
+
+The total number of people who have reviewed movies is
+
+```{r}
+nrow(edx %>% select(userId) %>% unique)
+```
+The reviewers were not equally busy, however.  Figure
+\@ref(fig:reviews-per-user) shows the distribution of the number of reviews
+submitted per user or per reviewer.
+
+```{r reviews-per-user, fig.cap="Reviews per user"}
+reviews_per_user <- edx %>% group_by(userId) %>%
+  summarize(number_of_reviews = n())
+histogram_graph(x = reviews_per_user$number_of_reviews,
+                data= reviews_per_user, bins=20) +
+  xlab("Reviews per Reviewer(User)")
+```
+```{r, echo=FALSE}
+rm(reviews_per_user)  #free up memory
+```
+
+## Rating distribution
+
+The actual ratings are a number between zero and five.  The distribution of the rating values across
+all entries in the *edx* dataset can
+be seen in Figure \@ref(fig:rating-distribution).
+
+```{r rating-distribution, fig.cap="Rating distribution"}
+ratings <- edx %>% group_by(rating) %>%
+  summarize(number_by_rating = n())
+options(scipen=10000000)
+bar_graph(x = ratings$rating, y=ratings$number_by_rating,
+                data= ratings) +
+  xlab("Rating") +
+  ylab("Total Number of Ratings") +
+  scale_x_continuous(limits=c(0, 5.5), breaks=seq(0.0, 5.5, 0.5),
+                     labels=c("0.0", "0.5", "1.0", "1.5", "2.0", "2.5",
+                              "3.0", "3.5", "4.0", "4.5", "5.0", ""))
+```
+```{r, echo=FALSE}
+rm(ratings)  #free up memory
+```
+
+```{r, echo=FALSE}
+half_ratings <- sum(edx$rating %in% c(0.5, 1.5, 2.5, 3.5, 4.5))
+percent <- round(half_ratings *100 / nrow(edx))
+```
+It can be clearly seen from Figure \@ref(fig:rating-distribution) that people generally rate
+movies as whole integers.  However approximately `r percent`% of the ratings are given with fractional ratings.
+This could cause issues with predictions.
+
+## Different genres
+
+The movies are described with a collection of genres.  The maximum number of genres on any one
+movie in the *edx* dataset is
+
+```{r}
+max(str_count(edx$genres, "\\|")) + 1
+```
+
+The names of the genres provided in the *edx* dataset are
+```{r}
+max_genres_per_movie <- max(str_count(edx$genres, "\\|")) + 1
+genre_title_vector <- as.character(1:max_genres_per_movie)
+genre_names <- edx %>%  select(genres) %>% unique %>%
+  separate(genres, genre_title_vector, sep="\\|") %>%
+  gather(to_remove, genre, genre_title_vector) %>% filter(!is.na(genre)) %>%
+  select(-to_remove) %>% unique %>% filter( !grepl("no genres listed", genre) )
+genre_names
+genre_names_rda <- "genre_names.rda"
+save(genre_names, file=genre_names_rda)
+```
+
+There are varying quantities of movies in each genre which can
+be seen in Figure \@ref(fig:qtys-per-genre)
+
+```{r qtys-per-genre, fig.cap="Total number of movies per genre"}
+#load(genre_names_rda)
+t <- 1:length(genre_names)
+df <- data.frame(genre = genre_names, total = t)
+
+for(i in 1:nrow(genre_names)) {
+  genre <- genre_names[i,]
+  df$total[i] <- edx %>% select(genres) %>% 
+    filter( grepl(genre, genres)) %>% count
+}
+
+options(scipen=10000000)
+bar_graph(data=df, x=reorder(df$genre, -as.numeric(df$total)), 
+          y=as.numeric(df$total)) +
+  ylab("Total Number of Movies") +
+  xlab("Genre (Ordered by Descending Number of Movies)") + 
+  scale_x_discrete() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+NB:  It is important to note at this time that if the *validation* dataset contains movies which have more types of genres or contains movies which have a larger number of genres, the generated model may not work properly.
+
+\newpage
+# Reshaping Datasets {#reshaping}
+
+The initial investigation into the structure of the *edx* dataset shows two interesting colums.
+
+* There is a release year of the movie embedded inside the *title*
+* There is a *timestamp* of the review
+
+The year that the movie was released can be extracted from the *title* field using regular expressions.  The *timestamp* of the review
+can be converted into a number of fields including the year of the review, the month of the review,
+the day of the month of the review, and the day of the week of the review by using methods on the *lubridate* library.  
+
+By subtracting 
+the year of the movie's release from the year of the review, the age of the movie at the time the review
+was made could be calculated.
+
+These date-type pieces of information could give insight into the data.  This will be described in
+more detail in Section \@ref(exploration).
+
+## Function to *reshape* data as necessary
+
+However, at this point, we will only describe the *reshape* function which was written to reshape the
+data into the required format:
+
+```{r}
+reshape <- function (dataset) {
+  print(paste("reshaping nrow=", nrow(dataset), sep=" "))
+  tmp <- dataset %>%
+    mutate(review_date = as.Date(as.POSIXct(as.numeric(timestamp), origin="1970-01-1"))) %>%
+    mutate(
+           review_year = year(review_date),
+           review_month = month(review_date),
+           review_day = day(review_date),
+           review_week_day = wday(review_date)) %>%
+    select(-timestamp) %>%
+    extract(title, c("short_title", "release_year"), regex="(^.*) \\((\\d\\d\\d\\d)\\)") %>%
+    mutate(release_year = as.numeric(release_year)) %>%
+    mutate(span_years = as.numeric(review_year) - as.numeric(release_year))
+  print("date extracted from title and timestamp split into smaller pieces of data");
+  rm(dataset)
+  print("removed original dataset to free up memory.  Reshaped data looks like")
+  print(head(tmp, 3))
+  tmp
+}
+```
+
+The *edx* dataset is transformed using this function and the newly reshaped dataset is
+stored as an intermediate R object.
+
+## Conditional code to *reshape* various datasets
+
+```{r}
+#
+# pseudo-constant defined at top of script
+#
+edx_reshaped_rda <- "edx_reshaped.rda"
+
+#
+# reshape the edx data when necessary
+#
+if ( !file.exists(edx_reshaped_rda)) {
+   print("reshaping edx data" )
+   load(edx_rda)
+   edx_reshaped <- reshape(edx)
+   rm(edx)
+   save(edx_reshaped, file = edx_reshaped_rda)
+   rm(edx_reshaped)
+   print(paste("reshaped edx data saved on", edx_reshaped_rda, sep=" "))
+}
+```
+
+The reshaped *edx_reshaped* dataset now looks like
+
+```{r, echo=FALSE}
+load(edx_reshaped_rda)
+```
+```{r}
+str(edx_reshaped)
+```
+
+A sample of the data looks like
+
+```{r}
+head(edx_reshaped, 3)
+```
+
+\newpage
+# Exploratory Analysis {#exploration}
+
+## Release year vs rating
+
+The author was curious if there was a relationship between the year that a movie
+was released and the average rating that the movie received.
+
+
+The Figure \@ref(fig:release-year-vs-rating) displays the year of the release of a movie on the horizontal axis and the mean (also
+known as the average) of the ratings of all movies released during that year.  
+
+```{r release-year-vs-rating, fig.cap="Release year vs average rating"}
+release_year_vs_rating <- edx_reshaped %>% group_by(release_year) %>% 
+    summarize(mean_rating_by_release_year = mean(rating))
+rating_graph(data = release_year_vs_rating, 
+             x=release_year_vs_rating$release_year, 
+             y=release_year_vs_rating$mean_rating_by_release_year) +
+  ggtitle("Year of Release vs Average Rating") +
+  xlab("Year of Release") 
+```
+```{r, echo=FALSE}
+rm(release_year_vs_rating)  #free up memory
+```
+
+On the rating scale of one to five, there is no significant
+change in the average ratings given the year of the release of a movie.
+
+## Review year vs rating
+
+The Figure \@ref(fig:review-year-vs-rating) compares the year of review (the year the reviewer or user wrote the review and 
+not the year the movie was released) and the average rating of all movies reviewed during that year
+
+```{r review-year-vs-rating, fig.cap="Year of review vs average rating"}
+review_year_vs_rating <- edx_reshaped %>% group_by(review_year) %>% 
+    summarize(mean_rating_by_review_year = mean(rating))
+rating_graph(data=review_year_vs_rating,
+             x=review_year_vs_rating$review_year, 
+             y=review_year_vs_rating$mean_rating_by_review_year) +
+  ggtitle("Year of Review vs Average Rating") +
+  xlab("Year of Review") 
+```
+```{r, echo=FALSE}
+rm(review_year_vs_rating)  #free up memory
+```
+
+Again, on a rating scale of one to five, there is no significant changes in the average rating when observed
+through the year the movie was reviewed.
+
+Comparing Figure \@ref(fig:review-year-vs-rating) and Figure \@ref(fig:release-year-vs-rating), it can be seen that the reviews 
+only started in 1995 whilst releases of the movies start in 1915.
+This may be important in future analysis.
+
+## Age of movie vs rating
+
+The age of a movie at the time of review can be calculated by subtracting the year the movie was released from
+the year the review was written.  This may be important.
+Movies which may
+have *flopped* when they were initially released may have had a resurgence of positive 
+ratings after a period of time.
+
+Figure \@ref(fig:age-vs-rating) shows the relationship between the age of a movie in years when it was rated and the average rating it was given.
+
+```{r age-vs-rating, fig.cap="Age of movie vs average rating"}
+age_of_movie_when_rated <- edx_reshaped %>% group_by(span_years) %>% 
+  summarize(mean_rating_by_age = mean(rating))
+rating_graph(data=age_of_movie_when_rated,
+             x=age_of_movie_when_rated$span_years, 
+             y=age_of_movie_when_rated$mean_rating_by_age) +
+  ggtitle("Age of Movie when Rated vs Average Rating") +
+  xlab("Age of Movie when Rated in Years") 
+```
+```{r, echo=FALSE}
+rm(age_of_movie_when_rated)  #free up memory
+```
+
+Again, on a rating scale of one to five, there is no significant change in the average rating values of movies when
+compared to the age of the movie at the time it was reviewed.
+
+## Specific genre and year vs rating
+
+The mores of a country change over time. The author wondered specifically about War movies and Science Fiction movies with
+respect to certain periods of time.  Considering War movies, for example, it is possible that in the period of time when there 
+is a *good war* (such as the 1940s during and immediately after World War II) that ratings for war movies might be higher 
+than when there is an unpopular war (such as the period from approximately 1965 to 1975
+during the Vietnam War).  Although the actual reviews only started in 1995, the time period right after World War II and
+the Vietnam War could not be tested.  However, there is a possibility that War movies might have received a higher than normal 
+rating right after September 11, 2001.  Figure \@ref(fig:war-movies-by-year) shows the average rating of War movies through the years.
+
+```{r war-movies-by-year, fig.cap="War movies by year vs average rating"}
+war_movies_by_years <- edx_reshaped %>% filter(str_detect(genres, "War") ) %>%
+  group_by(review_year) %>% 
+  summarize(war_movies_mean_rating_by_year = mean(rating))
+rating_graph(data=war_movies_by_years,
+             x=war_movies_by_years$review_year, 
+             y=war_movies_by_years$war_movies_mean_rating_by_year) +
+  ggtitle("War Movies by Year of Review vs Average Rating") +
+  xlab("War Movies Review Year") 
+```
+```{r, echo=FALSE}
+rm(war_movies_by_years)   # free up memory
+```
+
+Again, on a rating scale of one to five, Figure \@ref(fig:war-movies-by-year)  shows that an event such as September 11, 2001, did not
+substantially influence ratings of War movies.
+
+With respect to Science Fiction movies, since 1995 there have been no
+real substantial science events that have grabbed the popular attention as
+did, for example, Apollo moon missions (late 1960s).  Figure 
+\@ref(fig:scifi-movies-vs-rating) shows Science Fiction movies through the years
+with their average ratings.
+
+```{r scifi-movies-vs-rating, fig.cap="Sci-Fi movies by year vs average rating"}
+scifi_movies_by_years <- edx_reshaped %>% filter(str_detect(genres, "Sci-Fi") ) %>%
+  group_by(review_year) %>% 
+  summarize(scifi_movies_mean_rating_by_year = mean(rating))
+rating_graph(data=scifi_movies_by_years,
+             x=scifi_movies_by_years$review_year, 
+             y=scifi_movies_by_years$scifi_movies_mean_rating_by_year) +
+  ggtitle("Sci-Fi Movies by Year of Review vs Average Rating") +
+  xlab("Sci-Fi Movies Review Year") 
+```
+```{r, echo=FALSE}
+rm(scifi_movies_by_years)   # free up memory
+```
+
+Again, on a rating scale of one to five, there is no substantial change in the average ratings of science fiction
+movies over the years.
+
+## Specific genre and month vs rating
+
+The author wondered if certain months might be influential in the ratings over certain genres of movies.
+With specific respect to Romance movies, the author wondered if the *Christmas season* or the *Summer season* might
+influence ratings.  This is because the movie industry has two sub-genres of Summer Romance movies and Christmas Romance movies.   Figure
+\@ref(fig:romance-movies-by-month) shows Romance movies by month and their average
+ratings.
+
+```{r romance-movies-by-month, fig.cap="Romance movies by month vs average rating"}
+romance_movies_by_months <- edx_reshaped %>% filter(str_detect(genres, "Romance") ) %>%
+  group_by(review_month) %>% 
+  summarize(romance_movies_mean_rating_by_month = mean(rating))
+rating_graph(data=romance_movies_by_months,
+             x=romance_movies_by_months$review_month, 
+             y=romance_movies_by_months$romance_movies_mean_rating_by_month) +
+  ggtitle("Romance Movies by Month of Review vs Average Rating") +
+  xlab("Romance Movies Review Month") +
+  scale_x_continuous(limits=c(1, 12), breaks=1:12,
+            labels=c("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec") )
+```
+```{r, echo=FALSE}
+rm(romance_movies_by_months)  # free up memory
+```
+
+Again, on a rating scale of one to five, there is no substantial influence in the rating of Romance movies due to
+the month of the year.
+
+## Day of the month vs rating
+
+There is a possibility that people give more positive ratings to movies when they
+themselves are in a more positive state of mind.  This state of mind could be
+influenced by personal financial issues and be related to payday. Figure \@ref(fig:day-vs-rating) shows average movie
+ratings with respect to the day of the month.
+
+```{r day-vs-rating, fig.cap="Day of the month vs average rating"}
+movie_ratings_by_days <- edx_reshaped %>% 
+  group_by(review_day) %>% 
+  summarize(movie_rating_by_day = mean(rating))
+rating_graph(data=movie_ratings_by_days,
+             x=movie_ratings_by_days$review_day, 
+             y=movie_ratings_by_days$movie_rating_by_day) +
+  geom_point() + ggtitle("Day of the Month of Review vs Average Rating") +
+  xlab("Day of the Month") +
+  scale_x_continuous(limits=c(1, 31), breaks=1:31)
+```
+```{r, echo=FALSE}
+rm(movie_ratings_by_days)  # free up memory
+```
+
+Again, on a rating scale of one to five, there is no substantial relationship between the day of the month and
+the average ratings given to a movie.
+
+## Day of the week vs rating
+
+The author thought there might a possibility that people give more positive ratings to movies when
+they are not stressed about work related issues (unrelated to payday related issues).  There might be a 
+relationship between *weekends* and *workdays*.
+Figure \@ref(fig:day-of-week-vs-rating) looks at the day of the week and average ratings.
+
+```{r day-of-week-vs-rating, fig.cap="Day of the week vs average rating"}
+movie_ratings_by_day_of_week <- edx_reshaped %>% 
+  group_by(review_week_day) %>% 
+  summarize(movie_rating_by_day_of_week = mean(rating))
+rating_graph(data=movie_ratings_by_day_of_week,
+             x=movie_ratings_by_day_of_week$review_week_day, 
+             y=movie_ratings_by_day_of_week$movie_rating_by_day_of_week) +
+  geom_point() + ggtitle("Day of the Week of Review vs Average Rating") +
+  xlab("Day of the Week") +
+  scale_x_continuous(limits=c(1, 7), breaks=1:7,
+                     labels=c("Sun", "Mon", "Tue", "Wed", "Thu",
+                              "Fri", "Sat"))
+```
+```{r, echo=FALSE}
+rm(movie_ratings_by_day_of_week)  # free up memory
+```
+
+Again, on a rating scale of one to five, there is no substantial relationship between day of the week
+and average ratings given to movies.
+
+## Genre vs rating
+
+Although the author has previously looked specifically at War movies (Figure \@ref(fig:war-movies-by-year)),
+Science Fiction movies (Figure \@ref(fig:scifi-movies-vs-rating)), and Romance movies (Figure \@ref(fig:romance-movies-by-month)),
+Figure \@ref(fig:genre-vs-rating) displays average rating across all movies in all the possible genres.  The horizontal 
+axis is displayed in decreasing rating value.
+
+```{r, echo=FALSE}
+#load(genre_names_rda)
+```
+```{r genre-vs-rating, fig.cap="Genre vs average rating"}
+genre_ratings <- vector(mode="numeric", length=length(genre_names))
+load(edx_reshaped_rda)
+for(i in 1:nrow(genre_names) ) {
+  edited_genre <- genre_names[i,]
+  movie_rating_by_genre <- edx_reshaped %>% filter(str_detect(genres, edited_genre) ) %>%
+    summarize(genre_rating = mean(rating))
+  genre_ratings[i] <- movie_rating_by_genre$genre_rating
+}
+data <- data.frame(genre_names, genre_ratings)
+
+
+rating_graph(data=data,
+             x=reorder(data$genre, -data$genre_ratings), 
+             y=data$genre_ratings) +
+  geom_point() + ggtitle("Genre vs Average Rating") +
+  xlab("Genre (Ordered by Descending Average Rating)") +
+  scale_x_discrete() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+```{r, echo=FALSE}
+rm(genre_ratings, data, genre_names) # free up memory
+```
+
+Again, over a rating scale of zero to five, there is no substantial change in ratings when viewed
+in relation to the genre of the movie.
+
+## Reviewer vs rating
+
+Figure \@ref(fig:reviewer-vs-rating) shows the relationship between individual reviewers or users (the horizontal axis)
+and the average rating given to movies by that user (the vertical axis).  The horizontal axis is sorted by descending
+average rating values given by that user.
+
+```{r reviewer-vs-rating, fig.cap="Reviewer (user) vs average rating"}
+movie_ratings_by_userId <- edx_reshaped %>% 
+  group_by(userId) %>% 
+  summarize(movie_rating_by_userId = mean(rating))
+rating_graph(data=movie_ratings_by_userId,
+     x=reorder(movie_ratings_by_userId$userId, -movie_ratings_by_userId$movie_rating_by_userId),
+     y=movie_ratings_by_userId$movie_rating_by_userId) +
+  geom_point() + ggtitle("Reviewer vs Average Rating") +
+  xlab("Reviewer (Ordered by Descending Average Rating)") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major.x =  element_line(colour = "white", linetype = 3, size = 0.5),
+        panel.grid.minor.x = element_blank())
+```
+```{r, echo=FALSE}
+rm(movie_ratings_by_userId)  # free up memory
+```
+
+From Figure \@ref(fig:reviewer-vs-rating) it is clear that there is a relationship between the reviewer and the average rating that the reviewer gives to movies.  In other words, certain users or reviewers have a tendancy to rate movies higher than other users or reviewers.  This
+will definitely have to be investigated when the models are developed
+
+## Movie vs rating
+
+Figure \@ref(fig:movie-vs-rating) shows the relationship between the individual movies themselves (displayed on the horizontal
+axis) and the average rating that users have given that movie (displayed on the vertical axis). The horizontal axis is sorted
+in descending order by the average rating that the movie received.
+
+
+```{r movie-vs-rating, fig.cap="Movie vs average rating"}
+movie_ratings_by_movieId <- edx_reshaped %>% 
+  group_by(movieId) %>% 
+  summarize(movie_rating_by_movieId = mean(rating))
+rating_graph(data=movie_ratings_by_movieId,
+     x=reorder(movie_ratings_by_movieId$movieId, 
+		-movie_ratings_by_movieId$movie_rating_by_movieId),
+     y=movie_ratings_by_movieId$movie_rating_by_movieId) +
+  geom_point() + ggtitle("Movie vs Average Rating") +
+  xlab("Movie (Ordered by Descending Average Rating)") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        panel.grid.major.x =  element_line(colour = "white", linetype = 3, size = 0.5),
+        panel.grid.minor.x = element_blank())
+```
+```{r, echo=FALSE}
+rm(movie_ratings_by_movieId)  # free up memory
+```
+
+From Figure \@ref(fig:movie-vs-rating) it is clear that there is a relationship between the movie itself and the average rating that the
+movie receives.  This makes intuitive sense.  Some movies are more popular than other movies.  This fact will need to be investigated
+in detail when the models are developed.
+
+## Summary of exploratory analysis
+
+From the aforegoing, it is clear that of all the columns in the reshaped dataset, it is only the reviewer (or user) and
+the movie itself which appear to influence the rating of a movie in any substantial way.  Fields such as the year of the release of the movie
+or the year of the review have negligible effect on the average ratings.
+
+However, the reviewer and the movie both have major influence.  This will have to be investigated when the models are
+developed.
+
+\newpage
+# Model Investigations and Results {#model}
+
+This section describes the investigation into which model could be used to
+predict ratings.  Eight models were developed each with an improving (decreasing)
+RMSE (root mean square error).
+
+From the analysis done in Section \@ref(exploration), it is clear that only
+the reviewer (identified by the *userId* column) and the movie itself (identified by the *movieId* column) affect the 
+rating of a movie in any
+substantial way.  The remaining columns in the dataset will be ignored.
+
+To evaluate each model, the following function was used:
+
+```{r}
+RMSE <- function(true_ratings, predicted_ratings){
+        sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+```
+
+Each model will be reported in this section
+
+## Splitting *edx* data into *train* and *test*
+
+The *edx* dataset was split into a training (*train*) and testing (*test*) dataset (leaving the *validation* set untouched). This was done with
+
+```{r, eval=FALSE, echo=TRUE} 
+#
+# set up some pseudo constants that are used throughout
+#
+train_rda <- "train.rda"
+test_rda <- "test.rda"
+if ( !file.exists(train_rda) || !file.exists(test_rda) ) {
+        load(edx_rda)
+        #
+        # break the edx file into a train and test set
+        #
+        set.seed(1, sample.kind="Rounding")
+        #
+        #
+        test_index <- createDataPartition(edx$rating, times = 1, p = 0.25, list = FALSE)
+        train <- edx[-test_index,]
+        test <- edx[test_index,]
+        print(paste("edx has ", nrow(edx), sep=" "))
+        print(paste("train has ", nrow(train), sep=" "))
+        print(paste("test has ", nrow(test), sep=" "))
+        save(train, file=train_rda)
+        save(test, file=test_rda)
+        rm(edx, train, test)                    # clean up memory
+}
+
+```
+
+25% of the *edx* dataset was retained as test data.
+
+It is important to note that due to the findings which are documented in Section \@ref(exploration), the training set and test set 
+do not have to be reshaped.  They can be reshaped but the new columns will be ignored.
+
+
+## Average rating (naive approach)
+
+For this simple model, the mean (average) across all movies in the training set
+was calculated.  
+
+The first attempt to generate a model to predict ratings was simply to take
+the mean or average of all movies on the training dataset.  This value would
+be then applied against all elements of the test dataset and an RMSE would
+be calculated.  Irizarry (2021) calls this model a *naive approach* and
+refers to the overall average or mean as *mu*.  The
+author of this paper as a follower of Knuth's *literate programming* paradigm, however, uses the term *overall_average* within
+the R source code.
+
+```{r, echo=FALSE}
+load("train.rda")
+load("test.rda")
+```
+```{r}
+overall_average <- mean(train$rating)
+rmse <- RMSE(test$rating, overall_average)
+print(rmse)
+```
+```{r, echo=FALSE}
+results <- data.frame(Model = c("Overall Average (Naive Approach)"), RMSE=c(rmse))
+results_index <- 2
+```
+
+\begin{bf}
+The RMSE of this first model was `r rmse`.
+\end{bf}
+
+## Average rating by user (user effect)
+
+For this second model, the mean across movies which were rated by a specific
+user was calculated.  Figure \@ref(fig:reviewer-vs-rating) clearly shows there is a relationship
+between the reviewer and the average rating that a movie received by that reviewer.
+This could be known as the *user effect* by (Irizarry, 2021) but will be called *user_averages*
+by the author of this paper.  Only information
+about the user is used to determine this model.
+
+When the model needs to predict a rating for this specific user, then this
+value is used.  This could be calculated for every element in the *train* dataset
+and compared against the ratings in the *test* dataset.  The RMSE
+could be calculated.
+
+```{r}
+user_averages <- train %>% group_by(userId) %>%
+                summarize(userId = first(userId),
+                          user_average = mean(rating))
+model <- test %>% inner_join(user_averages, by="userId") 
+rmse <- RMSE(model$rating, model$user_average)
+print(rmse)
+```
+```{r, echo=FALSE}
+results[results_index,1] <- "User Averages (User Effect)"
+results[results_index,2] <- rmse
+results_index <- results_index + 1
+```
+
+\begin{bf}
+There was a slight improvement of the RMSE with the value now being `r rmse`.
+\end{bf}
+
+## Movie average (movie effect)
+
+The third model was to do a similar process as the second model but now
+just compare the movie averages instead of the user averages.  This could
+be known as the *movie effect* by (Irizarry, 2021) but will be called
+*movie_averages* by the author of this paper.  Only information about the movie is
+used to determine this model.
+
+```{r}
+movie_averages <- train %>% group_by(movieId) %>%
+                  summarize(movieId = first(movieId),
+                            movie_average = mean(rating))
+model <- test %>% inner_join(movie_averages, by="movieId")
+rmse <- RMSE(model$rating, model$movie_average)
+print(rmse)
+```
+```{r, echo=FALSE}
+results[results_index,1] <- "Movie Averages (Movie Effect)"
+results[results_index,2] <- rmse
+results_index <- results_index + 1
+```
+
+
+\begin{bf}
+There is again a slight improvement of the RMSE with the value now being `r rmse`.
+\end{bf}
+
+## Average of movie effect and user effect
+
+The fourth model was to take the numerical average of movie average and the user average.
+This could be known as averaging the movie effect and the user effect.
+
+```{r}
+model <- test %>% inner_join(user_averages, by="userId") %>%
+                           inner_join(movie_averages, by="movieId") %>%
+                           mutate(prediction = (movie_average + user_average)/2)
+rmse <- RMSE(model$rating, model$prediction)
+print(rmse)
+```
+```{r, echo=FALSE}
+results[results_index,1] <- "Average of Averages (Average Effect)"
+results[results_index,2] <- rmse
+results_index <- results_index + 1
+```
+
+\begin{bf}
+This gives us yet another slight improvement of the RMSE of `r rmse`.
+\end{bf}
+
+## Remove overall average from movie and user averages
+
+On close inspection of the previous model, however, one sees that the
+overall average of the ratings is, in effect, included twice:  once in
+the user average (or user effect) and once in the movie average (or
+movie effect).  This model removes
+the influence of the overall average from the individual user averages and
+from the individual movie averages.  It is then added back in only once.
+
+```{r}
+user_averages <- train %>% group_by(userId) %>%
+                 summarize(userId = first(userId),
+                 user_average = mean(rating - overall_average))
+movie_averages <- train %>% group_by(movieId) %>%
+                 summarize(movieId = first(movieId),
+                 movie_average = mean(rating - overall_average))
+model <- test %>% inner_join(user_averages, by="userId") %>%
+                 inner_join(movie_averages, by="movieId") %>%
+                 mutate(prediction = movie_average + user_average + overall_average)
+rmse <- RMSE(model$rating, model$prediction)
+print(rmse)
+```
+```{r, echo=FALSE}
+results[results_index,1] <- "Include Overall Averages Only Once"
+results[results_index,2] <- rmse
+results_index <- results_index + 1
+```
+
+\begin{bf}
+With this, the RMSE has improved again to `r rmse`
+\end{bf}
+
+## Remove the user effect from the movie effect
+
+This model removes the user average (user effect) from the movie average (movie effect) (along with removing the overall average) from both.
+
+```{r}
+user_averages <- train %>% group_by(userId) %>%
+  summarize(userId = first(userId),
+            user_average = mean(rating - overall_average))
+movie_averages <- train %>% group_by(movieId) %>%
+  inner_join(user_averages, by="userId") %>%
+  summarize(movieId = first(movieId),
+            movie_average = mean(rating - overall_average - user_average ))
+model <- test %>% inner_join(user_averages, by="userId") %>%
+  inner_join(movie_averages, by="movieId") %>%
+  mutate(prediction = movie_average + user_average + overall_average)
+rmse <- RMSE(model$rating, model$prediction)
+print(rmse)
+
+```
+```{r, echo=FALSE}
+results[results_index,1] <- "Remove User Average from Movie Average"
+results[results_index,2] <- rmse
+results_index <- results_index + 1
+```
+
+\begin{bf}
+Again, the RMSE has shown an improvement to `r rmse`.
+\end{bf}
+
+## Remove the movie effect from the user effect
+
+This model does the reverse of the previous model and removes the movie averages (movie effect) from the user averages (user effect).
+
+```{r}
+
+movie_averages <- train %>% group_by(movieId) %>%
+  summarize(movieId = first(movieId),
+            movie_average = mean(rating - overall_average))
+user_averages <- train %>% group_by(userId) %>%
+  inner_join(movie_averages, by="movieId") %>%
+  summarize(userId = first(userId),
+            user_average = mean(rating - overall_average - movie_average ))
+model <- test %>% inner_join(user_averages, by="userId") %>%
+  inner_join(movie_averages, by="movieId") %>%
+  mutate(prediction = movie_average + user_average + overall_average)
+rmse <- RMSE(model$rating, model$prediction)
+print(rmse)
+
+```
+```{r, echo=FALSE}
+results[results_index,1] <- "Remove Movie Average from User Average"
+results[results_index,2] <- rmse
+results_index <- results_index + 1
+```
+
+\begin{bf}
+The RMSE has improved to `r rmse`.
+\end{bf}
+
+## Cater for movies and users which had very few reviews
+
+The ratings of movies which only have one or two reviews can abnormally influence the predictions especially if those one or two reviews are extremely high.  This is also true where users have given only a few reviews.  The user is still *unpredictable*.
+
+To cater for such situations, instead of calculating the simple mean of the movie rating (minus the overall average rating) as in
+
+```{r, eval=FALSE, echo=TRUE}
+movie_averages <- train %>% group_by(movieId) %>%
+                 summarize(movieId = first(movieId),
+                 movie_average = mean(rating - overall_average))
+```
+
+a tuneable parameter can be used to assist in calculating this *movie_average* as in
+
+```{r, eval=FALSE, echo=TRUE} 
+movie_averages <- train %>% group_by(movieId) %>%
+                 summarize(movieId = first(movieId), movie_review_count = n(), 
+	               movie_average = 
+	               sum(rating - overall_average)/(movie_review_count + qty_constant)) 
+```
+where *qty_constant* is some constant which needs yet to be determined.  This *qty_constant* is refered to as
+*lamda* by (Irizarry, 2021).  Note that if *qty_constant* is equal to zero, then the expression
+
+```{r, eval=FALSE, echo=TRUE}
+movie_average = sum(rating - overall_average) / (movie_review_count + qty_constant)
+```
+
+is, in fact, the mean or average as used in the previous models.
+
+The optimal *qty_constant* can be determined iteratively by trying a sequence of values and looking for the smallest RMSE.
+Figure \@ref(fig:optimal-qty-constant) illustrates this phenomenon.
+
+```{r optimal-qty-constant, fig.cap="Finding optimal quantity constant"}
+qty_constants <- seq(2, 8, 0.1)
+rmses <- sapply(qty_constants, function(qty_constant) {
+	  movie_averages <- train %>% group_by(movieId) %>%
+	            summarize(movieId = first(movieId), movie_review_count = n(), 
+	            movie_average = sum(rating - overall_average)/
+	                            (movie_review_count + qty_constant)) 
+  	  user_averages <- train %>% group_by(userId) %>%
+    	 	inner_join(movie_averages, by="movieId") %>%
+    	  	summarize(userId = first(userId), user_review_count = n(),
+              	user_average = sum(rating - overall_average - movie_average )/
+				(user_review_count + qty_constant))
+
+	
+	  model <- test %>% inner_join(user_averages, by="userId") %>%
+	          inner_join(movie_averages, by="movieId") %>%
+	         mutate(prediction = movie_average + user_average + overall_average)
+	  rmse <- RMSE(model$rating, model$prediction)
+})
+df <- data.frame(qty_constants, rmses)
+ggplot(aes(qty_constants, rmses), data=df) + 
+  geom_point() + 
+  ylab("RMSE") +
+  xlab("Qty Cutoff Constant (lamda)") +
+  my_theme()
+
+```
+
+The minimum RMSE is `r min(rmses)` which occurs with *qty_constant* `r qty_constants[which.min(rmses)]`.  This *qty_constant* value describes a turning point where the average ratings of movies which have less than *qty_constant* number of reviews are less predictive than the average ratings of movies which have more than *qty_constant* number of reviews.  This means that our model is *less sure* that the average ratings are actually predictive of the rating when we have less than *qty_constant* reviews.  The same can be said about the number of reviews submitted by an individual user or reviewer.  Irizarry (2021) calls this feature *regularization*.
+
+That value can be put into the actual model and tested properly with the test data:
+
+```{r}
+qty_constant <- qty_constants[which.min(rmses)]
+movie_averages <- train %>% group_by(movieId) %>%
+  summarize(movieId = first(movieId), movie_review_count = n(),
+            movie_average = sum(rating - overall_average)/
+              (movie_review_count + qty_constant))
+user_averages <- train %>% group_by(userId) %>%
+    inner_join(movie_averages, by="movieId") %>%
+    summarize(userId = first(userId), user_review_count = n(),
+              user_average = sum(rating - overall_average - movie_average)/
+		 (user_review_count + qty_constant))
+
+model <- test %>% inner_join(user_averages, by="userId") %>%
+  inner_join(movie_averages, by="movieId") %>%
+  mutate(prediction = movie_average + user_average + overall_average)
+rmse <- RMSE(model$rating, model$prediction)
+print(rmse)
+```
+```{r, echo=FALSE}
+results[results_index,1] <- "Compensate for Users and Movies with few reviews"
+results[results_index,2] <- rmse
+results_index <- results_index + 1
+```
+
+\begin{bf}
+This gives an RMSE of `r rmse`.
+\end{bf}
+
+## Summary of models and RMSEs  {#modelsummary}
+
+A summary of the RMSEs for all eight models which were still using the *train* and *test* datasets
+can be found in Table \@ref(tab:results).
+
+\begin{center}
+```{r echo=FALSE}
+results %>% knitr::kable(caption="Results using train and test datasets",
+		         label="results") %>% kableExtra::kable_styling(latex_options="hold_position")
+```
+\end{center}
+
+## Rebuild model with all of *edx* dataset
+
+At this point, the model is operating at an acceptable level.
+Now the entire *edx* dataset (excluding the *validation* set) will be used to rebuild this model using
+the *qty_constant* value which was iteratively determined.
+
+```{r, echo=FALSE}
+load(edx_rda)
+```
+```{r}
+movie_averages <- edx %>% group_by(movieId) %>%
+  summarize(movieId = first(movieId), movie_review_count = n(),
+            movie_average = sum(rating - overall_average)/
+              (movie_review_count + qty_constant))
+user_averages <- edx %>% group_by(userId) %>%
+    inner_join(movie_averages, by="movieId") %>%
+    summarize(userId = first(userId), user_review_count = n(),
+              user_average = sum(rating - overall_average - movie_average )/
+			(user_review_count + qty_constant))
+```
+```{r, echo=FALSE}
+rm(edx)  # free up memory
+
+```
+
+## Results with *validation* dataset {#validation}
+
+That *validation* dataset is processed using this model.  Note that the *validation* dataset does not need to
+be reshaped in anyway.  After the investigations described in Section \@ref(exploration), it became
+apparent that none of the new fields created by the *reshape* function added any substantial value
+to the data.
+
+
+```{r}
+load(validation_rda)
+```
+```{r}
+model <- validation %>% inner_join(user_averages, by="userId") %>%
+  inner_join(movie_averages, by="movieId") %>%
+  mutate(prediction = movie_average + user_average + overall_average)
+rmse <- RMSE(model$rating, model$prediction)
+print(rmse)
+
+```
+
+\begin{bf}
+The RMSE is `r rmse`.
+\end{bf}
+
+\newpage
+# Conclusion {#conclusions}
+
+This paper describes the first of two Capstone projects for the *Professional Certificate in Data Science* offered by Harvardx
+on the Edx learning platform.  
+
+The project is to predict ratings that a reviewer would give to a movie given a handful of different pieces of
+information about the movie and about the reviewer.  A dataset was provided by the learning platform with instructions
+on how to break up the data into a training set and a validation set.
+
+\begin{bf}
+The author's code predicted the ratings with an RMSE (root mean squared error) value of `r rmse` which is less than
+the cutoff value of 0.86490 to earn 25 points.
+\end{bf}
+
+Caveats:  The model developed by this research depends on information about existing movies and existing reviewers.  The
+model is dependent on previous actions of the reviewer and previous actions of all reviewers for partiular movies.  That
+means that this model will not be effective when a brand new movie is added to the *validation* set or when a brand new reviewer is
+added to the *validation* set
+
+# Acknowledgements {-}
+
+The author would like to thank Professor Irizarry and his team for creating a compelling and
+effective course.  The exercises drew a person into the problem and enticed them to investigate
+the data.  Thank you.
+
+# References {-}
+
+
+Gartner Glossary, 2021, Accessed https://www.gartner.com/en/information-technology/glossary/predictive-behavior-analysis
+
+Irizarry, R.A., 2021, Introduction to Data Science.
+
+Knuth, D.E., 1984. Literate programming. The Computer Journal, 27(2), pp.97-111.
+
+Ljubuncic, I., 2015. Problem-solving in High Performance Computing: A Situational Awareness Approach with Linux. Morgan Kaufmann.
+
+Love, R., 2013. Linux system programming: talking directly to the kernel and C library. O'Reilly Media, Inc.
+
+Plous, S., 1993. The psychology of judgment and decision making. Mcgraw-Hill Book Company.
+
+Solomon, M., Russell-Bennett, R. and Previte, J., 2012. Consumer behaviour. Pearson Higher Education AU.
