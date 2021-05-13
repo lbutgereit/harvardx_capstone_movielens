@@ -1017,7 +1017,7 @@ Each model will be reported in this section
 
 The *edx* dataset was split into a training (*train*) and testing (*test*) dataset (leaving the *validation* set untouched). This was done with
 
-```{r, eval=FALSE, echo=TRUE} 
+```{r, echo=TRUE} 
 #
 # set up some pseudo constants that are used throughout
 #
@@ -1064,8 +1064,8 @@ author of this paper as a follower of Knuth's *literate programming* paradigm, h
 the R source code.
 
 ```{r, echo=FALSE}
-load("train.rda")
-load("test.rda")
+load(train_rda)
+load(test_rda)
 ```
 ```{r}
 overall_average <- mean(train$rating)
